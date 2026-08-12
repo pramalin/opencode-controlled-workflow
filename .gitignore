@@ -1,0 +1,23 @@
+# Local secrets and machine-specific configuration
+.env
+.env.*
+!.env.example
+
+# OpenCode/npm runtime files created under the writable config bind mount
+config/node_modules/
+config/package-lock.json
+config/npm-debug.log*
+config/.gitignore
+config/bun.lock
+config/bun.lockb
+
+# Editor / OS files
+.idea/
+.vscode/
+.DS_Store
+*~
+*.swp
+
+# Local logs and archives
+*.log
+*.zip

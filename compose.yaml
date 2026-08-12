@@ -1,0 +1,73 @@
+services:
+  opencode:
+    build:
+      context: .
+      args:
+        OPENCODE_IMAGE: ${OPENCODE_IMAGE:-ghcr.io/anomalyco/opencode:latest}
+
+    # Keep UID 0 for the OpenCode image, but use the host user's primary group
+    # so bundle files are removable by that user without CAP_CHOWN.
+    user: "0:${HOST_GID}"
+    working_dir: /root/repo
+    command: ["web", "--hostname", "0.0.0.0", "--port", "4096"]
+
+    environment:
+      OPENCODE_SERVER_USERNAME: ${OPENCODE_SERVER_USERNAME:-opencode}
+      OPENCODE_SERVER_PASSWORD: ${OPENCODE_SERVER_PASSWORD}
+
+      # Used only by the narrow bundle tools when rendering host-side commands.
+      HOST_REPO_PATH: ${REPO_PATH}
+      HOST_BUNDLE_ROOT: ${BUNDLE_ROOT}
+
+      # Runtime provider configuration. Keep these limits aligned with the
+      # model server; OpenCode uses them when managing context/compaction.
+      OPENCODE_CONFIG_CONTENT: >-
+        {"model":"local/${QWEN_MODEL_ID}",
+         "provider":{"local":{"npm":"@ai-sdk/openai-compatible",
+         "name":"Local Qwen",
+         "options":{"baseURL":"${QWEN_BASE_URL}","apiKey":"${QWEN_API_KEY:-local}"},
+         "models":{"${QWEN_MODEL_ID}":{"name":"Qwen 3.5",
+         "limit":{"context":${QWEN_CONTEXT_LENGTH:-65536},"output":${QWEN_OUTPUT_TOKENS:-4096}}}}}}}
+
+    volumes:
+      # Enforcement boundary: the real source repository is physically read-only.
+      - ${REPO_PATH}:/root/repo:ro
+
+      # The only project-output mount that custom tools may write.
+      - ${BUNDLE_ROOT}:/bundle:rw
+
+      # OpenCode writes small config-side state/package files here, so this mount
+      # is intentionally writable. Repository writes remain blocked by :ro above.
+      - ./config:/root/.config/opencode
+
+      # OpenCode application state, separate from the source repository.
+      - opencode-data:/root/.local/share/opencode
+      - opencode-state:/root/.local/state/opencode
+      - opencode-cache:/root/.cache
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    # Keep the Web UI off the LAN. Use localhost or SSH port forwarding.
+    ports:
+      - "127.0.0.1:${OPENCODE_PORT:-4096}:4096"
+
+    read_only: true
+    tmpfs:
+      - /tmp
+
+    cap_drop:
+      - ALL
+    cap_add:
+      # Required because OpenCode runs as UID 0 while ./config is normally
+      # owned by the host user. This does not override a read-only bind mount.
+      - DAC_OVERRIDE
+    security_opt:
+      - no-new-privileges:true
+
+    restart: unless-stopped
+
+volumes:
+  opencode-data:
+  opencode-state:
+  opencode-cache:

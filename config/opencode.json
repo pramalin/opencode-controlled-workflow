@@ -1,0 +1,66 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  "default_agent": "controlled",
+  "share": "disabled",
+  "snapshot": false,
+  "autoupdate": false,
+  "subagent_depth": 0,
+
+  "enabled_providers": ["local"],
+
+  "permission": {
+    "*": "deny",
+
+    "read": {
+      "*": "allow",
+      "*.env": "deny",
+      "*.env.*": "deny",
+      "*.env.example": "allow"
+    },
+    "glob": "allow",
+    "grep": "allow",
+    "list": "allow",
+    "question": "allow",
+
+    "bundle_*": "deny",
+    "git_inspect": "deny",
+
+    "edit": "deny",
+    "bash": "deny",
+    "task": "deny",
+    "lsp": "deny",
+    "skill": "deny",
+    "webfetch": "deny",
+    "websearch": "deny",
+    "external_directory": "deny"
+  },
+
+  "agent": {
+    "build": {
+      "disable": true
+    },
+    "plan": {
+      "disable": true
+    },
+    "general": {
+      "disable": true
+    },
+    "explore": {
+      "disable": true
+    },
+    "scout": {
+      "disable": true
+    }
+  },
+
+  "watcher": {
+    "ignore": [
+      ".git/**",
+      "target/**",
+      "build/**",
+      "dist/**",
+      "node_modules/**"
+    ]
+  }
+}
