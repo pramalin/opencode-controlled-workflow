@@ -18,31 +18,96 @@ The design deliberately separates **understanding code** from **changing code**:
 
 ## Why this exists
 
-Most coding-agent setups optimize for autonomy. This one optimizes for a different goal: **give the model broad read access for engineering reasoning while keeping mutation authority narrow, explicit, and reversible**.
+Most coding-agent setups optimize for autonomy.
 
-OpenCode's permission rules are useful policy controls, but they are not treated as the security boundary here. The source repository is also protected by a Docker read-only bind mount. The model can propose changes, but it cannot directly write them into the real working tree.
+This one optimizes for a different goal:
+
+> **Give the model broad read access for engineering reasoning while keeping mutation authority narrow, explicit, and reversible.**
+
+OpenCode's permission rules are useful policy controls, but they are not treated as the security boundary here.
+
+The source repository is additionally protected by a Docker read-only bind mount. The model can inspect and reason about the code, and it can prepare proposed changes, but it cannot directly write them into the real working tree.
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    U[Human] -->|discuss / review| OC[OpenCode + local LLM]
-    OC -->|read-only| R[(Source repo\n/root/repo:ro)]
+```text
+                           ┌──────────────────────────┐
+                           │          Human           │
+                           └────────────┬─────────────┘
+                                        │
+                              discuss / review
+                                        │
+                                        ▼
+                           ┌──────────────────────────┐
+                           │ OpenCode + local LLM     │
+                           │ controlled agent         │
+                           └────────────┬─────────────┘
+                                        │
+                                   read-only
+                                        │
+                                        ▼
+                           ┌──────────────────────────┐
+                           │ Source repository        │
+                           │ /root/repo               │
+                           │ Docker bind mount :ro    │
+                           └──────────────────────────┘
 
-    U -->|/prepare work-label| P[prepare-workflow]
-    P -->|complete files only| B[(Numbered bundle tree\n/bundle)]
 
-    U -->|manual rsync| R
-    U -->|IDE review + build + test| R
+       /prepare <work-label>
+                │
+                ▼
+       ┌───────────────────────┐
+       │ prepare-workflow      │
+       └──────────┬────────────┘
+                  │ complete files only
+                  ▼
+       ┌───────────────────────┐
+       │ Numbered bundles      │
+       │ /bundle               │
+       │ 001, 002, ...         │
+       └──────────┬────────────┘
+                  │
+           manual rsync
+                  │
+                  ▼
+       ┌───────────────────────┐
+       │ Source working tree   │
+       │ IDE review            │
+       │ human build + test    │
+       └───────────────────────┘
 
-    U -->|/finalize work-label| F[finalize-workflow]
-    F -->|fixed read-only Git operations| R
-    F -->|optional docs bundle| B
 
-    U -->|manual git add / commit| R
-    U -->|/committed work-label| C[committed-workflow]
-    C -->|scoped cleanup advice only| B
+       /finalize <work-label>
+                │
+                ▼
+       ┌───────────────────────┐
+       │ finalize-workflow     │
+       │ narrow Git inspection │
+       │ optional docs bundle  │
+       └───────────────────────┘
+
+
+       human git add / commit
+                │
+                ▼
+       /committed <work-label>
+                │
+                ▼
+       ┌───────────────────────┐
+       │ committed-workflow    │
+       │ verify state          │
+       │ cleanup advice only   │
+       └───────────────────────┘
 ```
+
+The important boundary is not the diagram—it is the filesystem:
+
+```text
+/root/repo   read-only
+/bundle      writable project output
+```
+
+The model never gets a writable mount to the real source repository.
 
 ## Authority model
 
@@ -108,7 +173,9 @@ Apply a bundle manually with the command recorded in its manifest:
 rsync -av -- '/path/to/opencode-bundles/mapping-memory/001/files/' '/path/to/repository/'
 ```
 
-Never add `--delete`. Deletions and rename-source removals are intentionally recorded for separate manual review.
+Never add `--delete`.
+
+Deletions and rename-source removals are intentionally recorded for separate manual review.
 
 ## Safety controls
 
@@ -124,7 +191,9 @@ The controls are intentionally layered:
 8. **Immutable bundles** — completed bundles cannot be changed; a correction requires a new numbered bundle.
 9. **Human validation boundary** — the human performs rsync, IDE review, builds, tests, staging, commit, push, and deletion.
 
-The model can still generate incorrect code. This project constrains **authority**, not correctness.
+The model can still generate incorrect code.
+
+This project constrains **authority**, not correctness.
 
 ## Prerequisites
 
@@ -133,9 +202,13 @@ The model can still generate incorrect code. This project constrains **authority
 - an OpenAI-compatible LLM endpoint reachable from the OpenCode container
 - `rsync` on the host for applying bundles
 
-The included local-model defaults were validated with Qwen 3.5 at a 65,536-token context window and a 4,096-token output limit. Those numbers are configuration defaults, not universal requirements; keep them aligned with the limits of your model server.
+The included local-model defaults were validated with Qwen 3.5 at a 65,536-token context window and a 4,096-token output limit.
 
-This repository's plugin dependency is pinned to `@opencode-ai/plugin` `1.18.16`, matching the OpenCode version used during validation. If you move to another OpenCode release, keep the plugin dependency compatible with it.
+Those numbers are configuration defaults, not universal requirements. Keep them aligned with the limits of your model server.
+
+This repository's plugin dependency is pinned to `@opencode-ai/plugin` `1.18.16`, matching the OpenCode version used during validation.
+
+If you move to another OpenCode release, keep the plugin dependency compatible with it.
 
 ## Setup
 
@@ -151,8 +224,10 @@ Edit `.env`:
 REPO_PATH=/absolute/path/to/your/repository
 BUNDLE_ROOT=/absolute/path/to/opencode-bundles
 HOST_GID=<output of id -g>
+
 QWEN_BASE_URL=<OpenAI-compatible /v1 endpoint reachable from the container>
 QWEN_MODEL_ID=<served model ID>
+
 OPENCODE_SERVER_PASSWORD=<long random password>
 ```
 
@@ -174,7 +249,9 @@ If the directory is not owned by your account, use the appropriate elevated perm
 docker compose up --build -d
 ```
 
-The custom tools import `@opencode-ai/plugin`. Install the pinned dependency into the writable OpenCode config mount:
+The custom tools import `@opencode-ai/plugin`.
+
+Install the pinned dependency into the writable OpenCode config mount:
 
 ```bash
 docker compose exec opencode sh -lc '
@@ -197,7 +274,8 @@ docker compose restart opencode
 ### 4. Verify the server
 
 ```bash
-curl -fsS -u 'opencode:<your-password>' http://127.0.0.1:4096/global/health
+curl -fsS -u 'opencode:<your-password>' \
+  http://127.0.0.1:4096/global/health
 ```
 
 If your OpenCode version exposes health at a different endpoint, use its corresponding server health endpoint.
@@ -205,14 +283,36 @@ If your OpenCode version exposes health at a different endpoint, use its corresp
 You can inspect the loaded provider model limits with:
 
 ```bash
-curl -fsS -u 'opencode:<your-password>' http://127.0.0.1:4096/provider | jq
+curl -fsS -u 'opencode:<your-password>' \
+  http://127.0.0.1:4096/provider | jq
+```
+
+For the included baseline, the relevant model entry should report:
+
+```json
+{
+  "context": 65536,
+  "output": 4096
+}
 ```
 
 ## Using the workflow
 
 ### Discuss
 
-Use ordinary chat for architecture, code review, debugging, and design. Normal chat may read the repository but cannot create a bundle. Even messages such as `proceed` or `implement it` do not grant mutation authority.
+Use ordinary chat for architecture, code review, debugging, and design.
+
+Normal chat may read the repository but cannot create a bundle.
+
+Even messages such as:
+
+```text
+proceed
+implement it
+make the change
+```
+
+do not grant mutation authority.
 
 ### Prepare
 
@@ -222,13 +322,27 @@ When the design is ready:
 /prepare mapping-memory
 ```
 
-The hidden prepare agent re-reads the **current** repository and creates exactly one new complete-file bundle. The current filesystem is authoritative; earlier bundles are never assumed to have been fully applied.
+The hidden prepare agent re-reads the **current** repository and creates exactly one new complete-file bundle.
+
+The current filesystem is authoritative. Earlier bundles are never assumed to have been fully applied.
 
 ### Review, apply, build, and test
 
-Apply the bundle manually using the manifest's `rsync -av` command. Then review the real Git changes in your IDE and run builds/tests yourself.
+Apply the bundle manually using the manifest's `rsync -av` command.
 
-If something fails, discuss the evidence first. When another bundle is actually desired:
+Then:
+
+```text
+review the real Git changes in the IDE
+        ↓
+run the build yourself
+        ↓
+run the tests yourself
+```
+
+If something fails, discuss the evidence first.
+
+When another bundle is actually desired:
 
 ```text
 /prepare mapping-memory
@@ -244,7 +358,11 @@ After the implementation has passed your tests:
 /finalize mapping-memory
 ```
 
-Finalization may inspect Git only through the fixed `git_inspect` operations. It can generate a final documentation bundle only when documentation is materially affected, and it returns explicit staging and commit guidance. It never stages or commits.
+Finalization may inspect Git only through the fixed `git_inspect` operations.
+
+It can generate a final documentation bundle only when documentation is materially affected, and it returns explicit staging and commit guidance.
+
+It never stages or commits.
 
 ### Committed
 
@@ -264,13 +382,22 @@ It never runs the cleanup itself.
 
 ## Why `/root/repo`?
 
-OpenCode Web's project picker naturally operates beneath the container user's home directory. Mounting the source at `/root/repo` keeps it easy to select while preserving the Docker `:ro` enforcement boundary.
+OpenCode Web's project picker naturally operates beneath the container user's home directory.
+
+Mounting the source at `/root/repo` keeps it easy to select while preserving the Docker `:ro` enforcement boundary.
 
 ## Why is `./config` writable?
 
-OpenCode creates config-side runtime/package files such as a `.gitignore`, and the custom tools need their plugin dependency available under that configuration tree. The config bind mount is therefore writable and is covered by this repository's `.gitignore`.
+OpenCode creates config-side runtime/package files such as a `.gitignore`, and the custom tools need their plugin dependency available under that configuration tree.
 
-That does **not** make the source repository writable: `/root/repo` is a separate bind mount with Docker's read-only flag.
+The config bind mount is therefore writable and is covered by this repository's `.gitignore`.
+
+That does **not** make the source repository writable:
+
+```text
+./config     → writable OpenCode configuration/runtime state
+/root/repo   → separate Docker read-only bind mount
+```
 
 ## Tested baseline
 
@@ -284,7 +411,26 @@ The workflow was exercised with:
 - container UID `0` with the host user's primary GID
 - all Linux capabilities dropped except `DAC_OVERRIDE`
 
-A repository-scale read-only review completed at 64K without forced compaction, while smaller 32K limits were insufficient for that particular multi-file workload. Treat this as an observed baseline, not a claim that every repository or model needs 64K.
+A repository-scale read-only review completed at 64K without forced compaction.
+
+During validation, the same multi-file review was also run with smaller context limits:
+
+```text
+32K context + 8192 output
+    → context exhausted during repository review
+
+32K context + 4096 output
+    → context exhausted during repository review
+
+64K context + 4096 output
+    → review completed without forced compaction
+```
+
+This is an observed result for that workload, model, and repository—not a claim that every repository or local model requires a 64K context window.
+
+The useful lesson was simpler:
+
+> Repository-scale coding tasks may require substantially more context than short chat or isolated-file benchmarks suggest.
 
 ## Repository contents
 
@@ -294,6 +440,7 @@ A repository-scale read-only review completed at 64K without forced compaction, 
 ├── .env.example
 ├── .gitignore
 ├── Dockerfile
+├── LICENSE
 ├── README.md
 ├── compose.yaml
 └── config/
@@ -313,15 +460,25 @@ A repository-scale read-only review completed at 64K without forced compaction, 
         └── git_inspect.js
 ```
 
+Runtime files created under `config/`, such as `node_modules/` and OpenCode's generated `.gitignore`, are intentionally excluded from version control.
+
 ## Non-goals
 
 This repository intentionally does not:
 
 - let the model edit the real source tree;
-- let the model run builds/tests/formatters/package managers;
+- let the model run builds, tests, formatters, or package managers;
 - let the model stage, commit, or push;
 - apply patches automatically;
 - clean bundle history automatically;
 - promise that generated code is correct.
 
-The point is not maximum autonomy. The point is useful local-model assistance with explicit, reviewable handoffs back to the human.
+The point is not maximum autonomy.
+
+The point is **useful local-model assistance with explicit, reviewable handoffs back to the human**.
+
+## License
+
+Licensed under the Apache License 2.0.
+
+See [LICENSE](LICENSE) for the full license text.
